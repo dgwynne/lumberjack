@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <syslog.h>
@@ -246,6 +247,8 @@ main(int argc, char *argv[])
 
 	if (!debug && daemon(1, 0) == -1)
 		err(1, "unable to daemonize");
+
+	signal(SIGPIPE, SIG_IGN);
 
 	event_init();
 	syslog_events();
