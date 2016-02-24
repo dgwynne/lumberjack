@@ -203,6 +203,9 @@ main(int argc, char *argv[])
 
 	while ((ch = getopt(argc, argv, "dl:u:")) != -1) {
 		switch (ch) {
+		case 'd':
+			debug = 1;
+			break;
 		case 'l':
 			i = nlisteners++;
 			listeners = realloc(listeners,
@@ -211,9 +214,6 @@ main(int argc, char *argv[])
 				err(1, "listener alloc");
 
 			listeners[i] = optarg;
-			break;
-		case 'd':
-			debug = 1;
 			break;
 		case 'u':
 			user = optarg;
