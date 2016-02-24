@@ -923,23 +923,3 @@ _bunyan(int level, const char *s, size_t slen)
 dtor:
 	strbuf_dtor(&sb);
 }
-
-void
-hexdump(const void *d, size_t datalen)
-{
-	const u_int8_t *data = d;
-	int i, j = 0;
-
-	for (i = 0; i < datalen; i += j) {
-		printf("% 4d: ", i);
-		for (j = 0; j < 16 && i+j < datalen; j++)
-			printf("%02x ", data[i + j]);
-		while (j++ < 16)
-			printf("   ");
-		printf("|");
-		for (j = 0; j < 16 && i+j < datalen; j++)
-			putchar(isprint(data[i + j]) ? data[i + j] : '.');
-		printf("|\n");
-	}
-}
-
