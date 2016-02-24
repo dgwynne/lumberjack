@@ -952,7 +952,6 @@ vbunyan(int level, const char *fmt, va_list ap)
 void
 _bunyan(int level, const char *s, size_t slen)
 {
-	extern char *__progname;
 	char when[128];
 	struct strbuf sb;
 	struct timespec tv;
@@ -986,7 +985,7 @@ _bunyan(int level, const char *s, size_t slen)
 	    "\"pid\":%d,"
 	    "\"time\":\"%s\","
 	    "\"msg\":\"%s\""
-	"}\n", BUNYAN_VERSION, level, __progname, log_host, log_self,
+	"}\n", BUNYAN_VERSION, level, getprogname(), log_host, log_self,
 	    when, strbuf_str(&sb)) == -1)
 		exit(1);
 	if (flock(log_fd, LOCK_UN) == -1)
