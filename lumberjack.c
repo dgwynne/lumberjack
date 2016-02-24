@@ -36,9 +36,18 @@
 #include "bunyan.h"
 #include "strbuf.h"
 
+#ifndef nitems
+#define nitems(_a) (sizeof(_a) / sizeof((_a)[0]))
+#endif
+
 #define LUMBERJACK_USER "_lumberjack"
+
+#define LUMBERJACK_PROTO "tcp"
 #define LUMBERJACK_HOST "localhost"
-#define LUMBERJACK_PORT "syslog"
+#define LUMBERJACK_PORT "514"
+
+#define LUMBERJACK_DEFAULT_LISTENER \
+	(LUMBERJACK_PROTO "://[" LUMBERJACK_HOST "]:" LUMBERJACK_PORT)
 
 struct syslog_listener {
 	struct event ev;
@@ -76,7 +85,26 @@ const struct syslog_parser_settings lumberjack_settings = {
 	syslog_end_ev
 };
 
-void	syslog_listen(int, const char *, const char *);
+struct syslog_protocol {
+	const char *name;
+	int family;
+	int socktype;
+};
+
+struct syslog_uri {
+	char			*_str;
+	const char		*proto;
+	const char		*host;
+	const char		*port;
+};
+
+const struct syslog_protocol *
+	syslog_name2proto(const char *);
+struct syslog_uri *
+	syslog_uri_parse(const char *);
+void	syslog_uri_free(struct syslog_uri *);
+
+void	syslog_listen(const char *);
 void	syslog_events(void);
 void	syslog_paused(int, short, void *);
 void	syslog_accept(int, short, void *);
@@ -93,7 +121,8 @@ char	*sockname(const struct sockaddr *, socklen_t);
 
 __dead void usage(void);
 
-TAILQ_HEAD(, syslog_listener) syslog_listeners =
+TAILQ_HEAD(syslog_listeners, syslog_listener);
+struct syslog_listeners syslog_listeners =
     TAILQ_HEAD_INITIALIZER(syslog_listeners);
 
 int	log_fd;
@@ -157,7 +186,7 @@ hexdump(const void *d, size_t datalen);
 __dead void
 usage(void)
 {
-	fprintf(stderr, "usage: %s [-46d] [-a address] [-p port] [logfile]\n",
+	fprintf(stderr, "usage: %s [-d] [-u user] [-l listener] [logfile]\n",
 	    getprogname());
 	exit(1);
 }
@@ -165,33 +194,18 @@ usage(void)
 int
 main(int argc, char *argv[])
 {
-	const char *host = LUMBERJACK_HOST;
-	const char *port = LUMBERJACK_PORT;
 	const char *user = LUMBERJACK_USER;
-	int family = PF_UNSPEC;
 	struct passwd *pw;
 	int debug = 0;
 	int ch;
 
-	while ((ch = getopt(argc, argv, "46Aa:dp:u:")) != -1) {
+	while ((ch = getopt(argc, argv, "dl:u:")) != -1) {
 		switch (ch) {
-		case '4':
-			family = PF_INET;
-			break;
-		case '6':
-			family = PF_INET6;
-			break;
-		case 'A':
-			host = NULL;
-			break;
-		case 'a':
-			host = optarg;
+		case 'l':
+			syslog_listen(optarg); /* this errs on failure */
 			break;
 		case 'd':
 			debug = 1;
-			break;
-		case 'p':
-			port = optarg;
 			break;
 		case 'u':
 			user = optarg;
@@ -212,6 +226,9 @@ main(int argc, char *argv[])
 
 	log_self = getpid();
 
+	if (TAILQ_EMPTY(&syslog_listeners))
+		syslog_listen(LUMBERJACK_DEFAULT_LISTENER);
+
 	pw = getpwnam(user);
 	if (pw == NULL)
 		errx(1, "unable to find user %s", user);
@@ -230,8 +247,6 @@ main(int argc, char *argv[])
 	default:
 		usage();
 	}
-
-	syslog_listen(family, host, port);
 
 	if (chroot(pw->pw_dir) == -1)
 		err(1, "chroot(%s)", pw->pw_dir);
@@ -257,28 +272,66 @@ main(int argc, char *argv[])
 	return (0);
 }
 
-void
-syslog_listen(int family, const char *host, const char *port)
+const struct syslog_protocol *
+syslog_name2proto(const char *name)
 {
+	static const struct syslog_protocol protocols[] = {
+		{ "tcp",	AF_UNSPEC,	SOCK_STREAM },
+		{ "tcp4",	AF_INET,	SOCK_STREAM },
+		{ "tcp6",	AF_INET6,	SOCK_STREAM },
+#if 0
+		{ "udp",	AF_UNSPEC,	SOCK_DGRAM },
+		{ "udp4",	AF_INET,	SOCK_DGRAM },
+		{ "udp6",	AF_IENT6,	SOCK_DGRAM },
+#endif
+	};
+
+	const struct syslog_protocol *proto;
+	int i;
+
+	for (i = 0; i < nitems(protocols); i++) {
+		proto = &protocols[i];
+
+		if (strcmp(proto->name, name) == 0)
+			return (proto);
+	}
+
+	return (NULL);
+}
+
+void
+syslog_listen(const char *arg)
+{
+	struct syslog_uri *uri;
+	const struct syslog_protocol *proto;
+
 	struct addrinfo hints, *res, *res0;
-	struct syslog_listener *listener;
+	int cerrno = EADDRNOTAVAIL;
+	const char *cause = "getaddrinfo";
+
 	int error;
 	int s;
 	int on = 1;
 
-	int cerrno = EADDRNOTAVAIL;
-	const char *cause = "getaddrinfo";
+	struct syslog_listener *listener;
+	struct syslog_listeners listeners = TAILQ_HEAD_INITIALIZER(listeners);
+
+	uri = syslog_uri_parse(arg);
+	if (uri == NULL)
+		errx(1, "\"%s\": unable to parse", arg);
+
+	proto = syslog_name2proto(uri->proto);
+	if (proto == NULL)
+		errx(1, "\"%s\": unsupported protocol \"%s\"", arg, uri->proto);
 
 	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = family;
-	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_family = proto->family;
+	hints.ai_socktype = proto->socktype;
 	hints.ai_flags = AI_PASSIVE;
 
-	error = getaddrinfo(host, port, &hints, &res0);
-	if (error) {
-		errx(1, "[%s]:%s: %s", host == NULL ? "*" : host, port,
-		    gai_strerror(error));
-	}
+	error = getaddrinfo(uri->host, uri->port, &hints, &res0);
+	if (error)
+		errx(1, "\"%s\": %s", arg, gai_strerror(error));
 
 	for (res = res0; res != NULL; res = res->ai_next) {
 		s = socket(res->ai_family, res->ai_socktype | SOCK_NONBLOCK,
@@ -305,13 +358,19 @@ syslog_listen(int family, const char *host, const char *port)
 			err(1, "listener malloc");
 
 		listener->s = s;
-		TAILQ_INSERT_TAIL(&syslog_listeners, listener, entry);
+		TAILQ_INSERT_TAIL(&listeners, listener, entry);
 	}
 
-	if (TAILQ_EMPTY(&syslog_listeners))
+	if (TAILQ_EMPTY(&listeners))
 		errc(1, cerrno, "%s", cause);
 
 	freeaddrinfo(res0);
+	syslog_uri_free(uri);
+
+	while ((listener = TAILQ_FIRST(&listeners)) != NULL) {
+		TAILQ_REMOVE(&listeners, listener, entry);
+		TAILQ_INSERT_TAIL(&syslog_listeners, listener, entry);
+	}
 }
 
 void
@@ -922,4 +981,93 @@ _bunyan(int level, const char *s, size_t slen)
 
 dtor:
 	strbuf_dtor(&sb);
+}
+
+struct syslog_uri *
+syslog_uri_parse(const char *in)
+{
+	struct syslog_uri *uri;
+	char *str, *p;
+
+	uri = malloc(sizeof(*uri));
+	if (uri == NULL)
+		return (NULL);
+
+	str = strdup(in);
+	if (str == NULL)
+		goto err;
+
+	uri->_str = str;
+	/* defaults */
+	uri->proto = LUMBERJACK_PROTO;
+	uri->host = LUMBERJACK_HOST;
+	uri->port = LUMBERJACK_PORT;
+
+	p = strstr(str, "://");
+	if (p != NULL) {
+		uri->proto = str;
+
+		*p = '\0';
+
+		str = p + 3; /* + strlen("://") */
+	}
+
+	switch (*str) {
+	case '\0':
+		goto err;
+	case '[':
+		str++;
+		uri->host = str;
+
+		p = strchr(str, ']');
+		if (p == NULL)
+			goto err;
+
+		*p = '\0';
+		str = p + 1; /* move past the ']' */
+
+		switch (*str) {
+		case '\0':
+			break;
+		case ':':
+			*str = '\0';
+			str++;
+
+			uri->port = str;
+			break;
+		default:
+			goto err;
+		}
+
+		break;
+
+	default:
+		uri->host = str;
+
+		p = strchr(str, ':');
+		if (p != NULL) {
+			*p = '\0';
+			str = p + 1;
+
+			uri->port = str;
+		}
+
+		break;
+	}
+
+	if (strcmp(uri->host, "*") == 0)
+		uri->host = NULL;
+
+	return (uri);
+
+err:
+	syslog_uri_free(uri);
+	return (NULL);
+}
+
+void
+syslog_uri_free(struct syslog_uri *uri)
+{
+	free(uri->_str);
+	free(uri);
 }

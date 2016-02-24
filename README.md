@@ -1,23 +1,24 @@
 A network syslog listener to Bunyan proxy
 
 ```
-usage: lumberjack [-46Ad] [-a address] [-p port] [-u user] [/path/to/logfile]
+usage: lumberjack [-d] [-l listener] [-u user] [/path/to/logfile]
 ```
 
-By default lumberjack listens on the syslog port on localhost, and
-attempts to runs as the _lumberjack user. lumberjack must be started
-as root so it can bind to low ports, but chroots to it's users
-homedir and drops privs.
+lumberjack is a priv revoking daemon. This means it starts as root,
+opens the log file, opens it's listening sockets, and then chroots
+and drops privs. The user it drops privs to by default is _lumberjack,
+but an alternate user can be specified with -u.
 
-The listening address can be specified with -a. -A specifies a
-wildcard address. The port lumberjack listens on can be specified
-with -p. The address family it listens on can be limited to IPv4
-or IPv6 using -4 or -6 respectively.
+By default lumberjack listens to tcp connections on localhost port
+514 unless listeners are specified with -l arguments. A listener
+is as a hostname with an optional port and protocol in a URI format
+(like the one used in OpenBSDs syslog.conf). Using * for a hostname
+will cause the listener to bind to wildcard addresses.  Currently
+supported protocols are tcp, tcp4, and tcp6.
 
-If a logfile is not specified, lumberjack will log to standard out.
+If a logfile is not specified lumberjack will log to standard out.
 
--d causes lumberjack to not daemonise and will write errors to
-stderr.
+-d causes lumberjack to not daemonise and write errors to stderr.
 
 lumberjack has been written on [OpenBSD](http://www.openbsd.org/)
 so that's what the Makefile is for. It's probably not hard to port
