@@ -195,6 +195,8 @@ int
 main(int argc, char *argv[])
 {
 	const char *user = LUMBERJACK_USER;
+	const char **listeners = NULL;
+	size_t nlisteners = 0, i;
 	struct passwd *pw;
 	int debug = 0;
 	int ch;
@@ -202,7 +204,13 @@ main(int argc, char *argv[])
 	while ((ch = getopt(argc, argv, "dl:u:")) != -1) {
 		switch (ch) {
 		case 'l':
-			syslog_listen(optarg); /* this errs on failure */
+			i = nlisteners++;
+			listeners = realloc(listeners,
+			    sizeof(*listeners) * nlisteners);
+			if (listeners == NULL)
+				err(1, "listener alloc");
+
+			listeners[i] = optarg;
 			break;
 		case 'd':
 			debug = 1;
@@ -226,8 +234,13 @@ main(int argc, char *argv[])
 
 	log_self = getpid();
 
-	if (TAILQ_EMPTY(&syslog_listeners))
+	if (listeners == NULL)
 		syslog_listen(LUMBERJACK_DEFAULT_LISTENER);
+	else {
+		for (i = 0; i < nlisteners; i++)
+			syslog_listen(listeners[i]); /* errs on failure */
+		free(listeners);
+	}
 
 	pw = getpwnam(user);
 	if (pw == NULL)
