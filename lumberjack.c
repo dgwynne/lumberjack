@@ -47,7 +47,7 @@
 #define LUMBERJACK_PORT "514"
 
 #define LUMBERJACK_DEFAULT_LISTENER \
-	(LUMBERJACK_PROTO "://[" LUMBERJACK_HOST "]:" LUMBERJACK_PORT)
+	(LUMBERJACK_PROTO "://" LUMBERJACK_HOST ":" LUMBERJACK_PORT)
 
 struct syslog_listener {
 	struct event ev;
@@ -375,7 +375,7 @@ syslog_listen(const char *arg)
 	}
 
 	if (TAILQ_EMPTY(&listeners))
-		errc(1, cerrno, "%s", cause);
+		errc(1, cerrno, "\"%s\": %s", arg, cause);
 
 	freeaddrinfo(res0);
 	syslog_uri_free(uri);
