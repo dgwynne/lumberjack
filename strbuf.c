@@ -64,6 +64,8 @@ void
 strbuf_dtor(struct strbuf *sb)
 {
 	free(sb->buf);
+	sb->buf = NULL;
+	sb->size = sb->cursor = 0;
 }
 
 const char *

@@ -110,6 +110,7 @@ void	syslog_paused(int, short, void *);
 void	syslog_accept(int, short, void *);
 void	syslog_read(int, short, void *);
 ssize_t	syslog_parse(struct syslog_source *, size_t, ssize_t);
+void	syslog_recv(int, short, void *);
 int	syslog_errmsg(struct syslog_source *);
 void	syslog_close(struct syslog_source *);
 
@@ -292,11 +293,9 @@ syslog_name2proto(const char *name)
 		{ "tcp",	AF_UNSPEC,	SOCK_STREAM },
 		{ "tcp4",	AF_INET,	SOCK_STREAM },
 		{ "tcp6",	AF_INET6,	SOCK_STREAM },
-#if 0
 		{ "udp",	AF_UNSPEC,	SOCK_DGRAM },
 		{ "udp4",	AF_INET,	SOCK_DGRAM },
-		{ "udp6",	AF_IENT6,	SOCK_DGRAM },
-#endif
+		{ "udp6",	AF_INET6,	SOCK_DGRAM },
 	};
 
 	const struct syslog_protocol *proto;
@@ -366,6 +365,23 @@ syslog_listen(const char *arg)
 			continue;
 		}
 
+		if (res->ai_socktype == SOCK_DGRAM) {
+			switch (res->ai_family) {
+			case AF_INET:
+				if (setsockopt(s,
+				    IPPROTO_IP, IP_RECVDSTADDR,
+				    &on, sizeof(on)) == -1)
+					err(1, "setsockopt(IP_RECVDSTADDR)");
+				break;
+			case AF_INET6:
+				if (setsockopt(s,
+				    IPPROTO_IPV6, IPV6_RECVPKTINFO,
+				    &on, sizeof(on)) == -1)
+					err(1, "setsockopt(IPV6_RECVPKTINFO)");
+				break;
+			}
+		}
+
 		listener = malloc(sizeof(*listener));
 		if (listener == NULL)
 			err(1, "listener malloc");
@@ -390,13 +406,33 @@ void
 syslog_events(void)
 {
 	struct syslog_listener *listener;
+	int type;
+	socklen_t len;
 
 	TAILQ_FOREACH(listener, &syslog_listeners, entry) {
-		evtimer_set(&listener->pause, syslog_paused, listener);
-		event_set(&listener->ev, listener->s, EV_READ | EV_PERSIST,
-		    syslog_accept, listener);
+		len = sizeof(type);
+		if (getsockopt(listener->s, SOL_SOCKET, SO_TYPE,
+		    &type, &len) == -1)
+			err(1, "getsockopt(SO_TYPE)");
+
+		switch (type) {
+		case SOCK_STREAM:
+			evtimer_set(&listener->pause, syslog_paused, listener);
+			event_set(&listener->ev, listener->s,
+			    EV_READ | EV_PERSIST, syslog_accept, listener);
+			listen(listener->s, 8);
+			break;
+		case SOCK_DGRAM:
+			event_set(&listener->ev, listener->s,
+			    EV_READ | EV_PERSIST, syslog_recv, listener);
+			break;
+
+		default:
+			errx(1, "unsupported listening socket type %d", type);
+			/* NOTREACHED */
+		}
+
 		event_add(&listener->ev, NULL);
-		listen(listener->s, 8);
 	}
 }
 
@@ -588,8 +624,10 @@ syslog_parse(struct syslog_source *source, size_t base, ssize_t len)
 		l += n;
 
 		if (syslog_parser_done(&source->p)) {
+			strbuf_dtor(&source->msg);
+
 			syslog_parser_init(&source->p, 1, source);
-			strbuf_ctor(&source->msg);
+			strbuf_ctor(&source->msg); /* XXX */
 
 			source->len_io -= source->len_msg;
 			source->off += source->len_msg;
@@ -611,6 +649,70 @@ syslog_errmsg(struct syslog_source *source)
 	    source->addr, source->p.state);
 	syslog_close(source);
 	return (-1);
+}
+
+void
+syslog_recv(int fd, short events, void *l)
+{
+	struct sockaddr_storage ss;
+	socklen_t len = sizeof(ss);
+
+	char buf[SOURCE_BUF_LEN];
+	struct syslog_source source;
+	ssize_t n, m;
+
+	n = recvfrom(fd, buf, sizeof(buf), 0, sa(&ss), &len);
+	if (n == -1) {
+		switch (errno) {
+		case EINTR:
+		case EAGAIN:
+			return;
+		default:
+			lwarnx("recvmsg");
+			return;
+		}
+	}
+
+	source.addr = sockname(sa(&ss), len);
+	if (source.addr == NULL) {
+		/* sockname lwarns itself */
+		return;
+	}
+
+	syslog_parser_init(&source.p, 0, &source);
+	if (strbuf_ctor(&source.msg) == -1) {
+		lwarn("recv strbuf constructor");
+		goto free;
+	}
+
+	m = syslog_parser_exec(&source.p, &lumberjack_settings, buf, n);
+	if (m == -1) {
+		lwarnx("%s: error parsing syslog message (state %d)",
+		    source.addr, source.p.state);
+		goto fail;
+	}
+	if (m < n) {
+		lwarnx("%s: malformed syslog message (state %d)",
+		    source.addr, source.p.state);
+		goto fail;
+	}
+
+	m = syslog_parser_exec(&source.p, &lumberjack_settings, NULL, 0);
+	if (m == -1) {
+		lwarnx("%s: incomplete syslog message (state %d)",
+		    source.addr, source.p.state);
+		goto fail;
+	}
+
+	if (!syslog_parser_done(&source.p)) {
+		lwarnx("%s: parsing incomplete", source.addr);
+		goto fail;
+	}
+
+fail:
+	strbuf_dtor(&source.msg);
+free:
+	free(source.addr);
 }
 
 int
@@ -719,18 +821,18 @@ char *
 sockname(const struct sockaddr *sa, socklen_t len)
 {
 	char host[NI_MAXHOST];
-	char port[NI_MAXHOST];
 	char *name;
 	int error;
 
-	error = getnameinfo(sa, len, host, sizeof(host), port, sizeof(port),
+	error = getnameinfo(sa, len, host, sizeof(host), NULL, 0,
 	    NI_NUMERICHOST | NI_NUMERICSERV);
 	if (error != 0) {
 		lwarnx("sockname: %s", gai_strerror(error));
 		return (NULL);
 	}
 
-	if (asprintf(&name, "[%s]:%s", host, port) == -1) {
+	name = strdup(host);
+	if (name == NULL) {
 		lwarn("sockname: print");
 		return (NULL);
 	}
@@ -844,8 +946,6 @@ syslog_end_ev(void *ctx)
 		exit(1);
 	if (flock(log_fd, LOCK_UN) == -1)
 		exit(1);
-
-	strbuf_dtor(&source->msg);
 
 	return (0);
 }
