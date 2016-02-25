@@ -25,7 +25,7 @@ so that's what the Makefile is for. It's probably not hard to port
 elsewhere.
 
 An example of a log message in the format specified by
-[Bunyan](https://github.com/trentm/node-bunyan) is:
+[Bunyan](https://github.com/trentm/node-bunyan#core-fields) is:
 
 ```json
   {
