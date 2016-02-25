@@ -627,7 +627,11 @@ syslog_parse(struct syslog_source *source, size_t base, ssize_t len)
 			strbuf_dtor(&source->msg);
 
 			syslog_parser_init(&source->p, 1, source);
-			strbuf_ctor(&source->msg); /* XXX */
+			if (strbuf_ctor(&source->msg) == -1) {
+				lwarn("strbuf constructor");
+				syslog_close(source);
+				return (-1);
+			}
 
 			source->len_io -= source->len_msg;
 			source->off += source->len_msg;
@@ -802,6 +806,7 @@ bunyan_facility(int facility)
 void
 syslog_close(struct syslog_source *source)
 {
+	strbuf_dtor(&source->msg);
 	event_del(&source->ev);
 	free(source->addr);
 	free(source->buf);
