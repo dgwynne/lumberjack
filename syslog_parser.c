@@ -575,7 +575,9 @@ syslog_parser_exec(struct syslog_parser *parser,
 		case S_PRI_BEGINNING:
 			return (0);
 		case S_MSG:
-			syslog_parser_end(settings, parser->ctx);
+			parser->state = S_END;
+			if (syslog_parser_end(settings, parser->ctx) != 0)
+				return (-1);
 			return (0);
 		default:
 			return (-1);
