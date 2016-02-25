@@ -12,9 +12,10 @@ but an alternate user can be specified with -u.
 By default lumberjack listens to tcp connections on localhost port
 514 unless listeners are specified with -l arguments. A listener
 is as a hostname with an optional port and protocol in a URI format
-(like the one used in OpenBSDs syslog.conf). Using * for a hostname
-will cause the listener to bind to wildcard addresses.  Currently
-supported protocols are tcp, tcp4, and tcp6.
+(like the one used in OpenBSDs syslog.conf), ie,
+`[proto://]hostname[:port]`. Using * for a hostname will cause the
+listener to bind to wildcard addresses. Currently supported protocols
+are tcp, tcp4, tcp6, udp, udp4 and udp6.
 
 If a logfile is not specified lumberjack will log to standard out.
 
