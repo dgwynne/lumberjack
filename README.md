@@ -39,7 +39,7 @@ An example of a log message in the format specified by
     "facility": "authpriv",
     "_": [
       {
-        "src": "[127.0.0.1]:3640",
+        "src": "127.0.0.1",
         "dst": "ozone.eait.uq.edu.au",
         "time": "2016-02-23T01:42:18.568Z"
       }
@@ -53,7 +53,7 @@ An example of a log message in the format specified by
 [2016-02-23T01:42:18Z] LVL35: syslog/0 on ozone.eait.uq.edu.au: sudo:     xdlg : TTY=ttyp2 ; PWD=/server/home/xdlg/lumberjack ; USER=root ; COMMAND=./lumberjack -d -p 514 /var/log/bunyan/test (facility=authpriv)
     _: [
       {
-        "src": "[127.0.0.1]:3640",
+        "src": "127.0.0.1",
         "dst": "ozone.eait.uq.edu.au",
         "time": "2016-02-23T01:42:18.568Z"
       }
