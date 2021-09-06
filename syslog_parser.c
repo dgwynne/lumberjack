@@ -358,7 +358,7 @@ syslog_parser_run(struct syslog_parser *parser,
 
 	case S_TS_BSD_Se:
 		if (ch == 'e')
-			return (S_TS_BSD_Apr);
+			return (S_TS_BSD_Sep);
 
 		return (S_DEAD);
 
